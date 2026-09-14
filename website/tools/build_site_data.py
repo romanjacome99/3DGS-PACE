@@ -106,6 +106,9 @@ PROTOCOL = [
     ("train", "3dgs", "fastergs", "protocol_cross_fgsPolicy_on_3dgs", "transfer"),
     ("train", "dash", "fastergs", "protocol_cross_fgsPolicy_on_dash", "transfer"),
     ("train", "legs", "fastergs", "protocol_cross_fgsPolicy_on_legs", "transfer"),
+    ("train", "legs", "3dgs", "protocol_cross_3dgsPolicy_on_legs", "transfer"),
+    ("train", "legs", "dash", "protocol_cross_dashPolicy_on_legs", "transfer"),
+    ("train", "fastergs", "dash", "protocol_cross_dashPolicy_on_fastergs", "transfer"),
 ]
 SCENE_META = {
     "train": ("Tanks & Temples", "held-out"), "bicycle": ("Mip-NeRF 360", "zero-shot"), "stump": ("Mip-NeRF 360", "zero-shot"),

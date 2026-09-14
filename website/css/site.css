@@ -224,3 +224,23 @@ main { padding-bottom: 60px; }
 .pfig.half img { max-width: 560px; margin: 0 auto; }
 .pfig figcaption { font-size: .85rem; color: var(--muted); margin-top: 10px; }
 .pfig-details summary { cursor: pointer; font-weight: 600; font-size: .92rem; color: #333; margin: 6px 0; }
+
+/* landing page */
+.landing-hero { padding-top: 48px; }
+.landing-hero h1 { font-size: clamp(1.8rem, 3.2vw, 2.6rem); margin-bottom: 14px; max-width: 900px; }
+.tldr { font-size: 1.12rem; color: #2c343d; max-width: 900px; }
+.pfig.teaser { margin-top: 26px; }
+.tiles-row { grid-template-columns: repeat(4, 1fr); }
+.facts { padding-left: 18px; font-size: .95rem; }
+.facts li { margin-bottom: 8px; }
+.rt { border-collapse: collapse; width: 100%; font-size: .84rem; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-top: 14px; }
+.rt th, .rt td { padding: 6px 8px; text-align: center; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.rt thead th { background: #f3f4f6; font-weight: 600; font-size: .78rem; }
+.rt tbody th { text-align: left; font-weight: 600; }
+.rt td.hi { color: var(--hi); font-weight: 600; }
+.rt td.lo { color: #b3261e; }
+.cap { font-size: .82rem; color: var(--muted); margin: 6px 0 14px; }
+.landing-foot { padding-top: 30px; }
+.demo-intro { padding-bottom: 0; }
+.demo-intro h1 { font-size: 1.8rem; }
+@media (max-width: 900px) { .tiles-row { grid-template-columns: repeat(2, 1fr); } }

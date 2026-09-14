@@ -12,7 +12,8 @@ Nothing here trains anything. All content is derived from existing experiment ou
 
 ```
 website/
-  index.html            the page
+  index.html            static landing page: summary, teaser, workflow, key results (tables built by tools/build_landing.py)
+  demo.html             the interactive demo (viewer, decisions, transfer, ablation)
   css/site.css
   js/main.js            bootstrap (loads data/manifest.json + data/decisions.json)
   js/viewer.js          3-D viewer UI, camera/orbit, HUD, decision strip, image strip
@@ -23,6 +24,8 @@ website/
   js/decisions.js       decisions explorer (per-scene overview) + transfer matrix
   js/population.js      Gaussian population evolution section
   tools/build_site_data.py   rebuilds data/ from outputs/ (CPU only, numpy + Pillow)
+  tools/build_landing.py     injects the landing-page result tables from data/decisions.json
+  figures/              paper figures exported with pdftocairo (SVG)
   data/                 ~460 MB bundle: splats/ (quantised Gaussians), renders/, clouds/, gt/, manifest.json, decisions.json
 ```
 
