@@ -217,3 +217,10 @@ main { padding-bottom: 60px; }
 .abl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 14px 10px; }
 .abl-curves { display: grid; gap: 8px 14px; background: var(--panel); border: 1px solid var(--line); border-top: 0; padding: 6px 14px 12px; border-radius: 0 0 12px 12px; }
 @media (max-width: 900px) { .abl-grid, .abl-curves { grid-template-columns: 1fr !important; } }
+
+/* paper figures */
+.pfig { margin: 18px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.pfig img { width: 100%; height: auto; display: block; }
+.pfig.half img { max-width: 560px; margin: 0 auto; }
+.pfig figcaption { font-size: .85rem; color: var(--muted); margin-top: 10px; }
+.pfig-details summary { cursor: pointer; font-weight: 600; font-size: .92rem; color: #333; margin: 6px 0; }
