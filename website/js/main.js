@@ -1,7 +1,7 @@
-import { Viewer, FrameStrip } from './viewer.js';
-import { Decisions, Transfer } from './decisions.js';
-import { Population } from './population.js';
-import { Ablation } from './ablation.js';
+import { Viewer, FrameStrip } from './viewer.js?v=3';
+import { Decisions, Transfer } from './decisions.js?v=3';
+import { Population } from './population.js?v=3';
+import { Ablation } from './ablation.js?v=3';
 
 // Where the data bundle lives. Relative by default (same GitHub Pages site); point this at another
 // host (e.g. a release asset folder or a bucket with CORS) if you prefer to keep the ~180 MB of splats out of the repo.

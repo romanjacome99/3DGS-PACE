@@ -15,29 +15,47 @@ Writes website/data/:
   decisions.json                                 per-block action logs + curves + time-to-target of the protocol runs
 
 AGSP binary format (little-endian), planar:
-  header 48 B: magic 'AGSP', u32 version=2, u32 count, u32 true_count, u32 flags(bit0=subsampled),
-               f32 bbox_lo[3], f32 bbox_hi[3], u32 n_core
-  pos   u16 x 3*n_core            core positions quantized in bbox
-        f32 x 3*(count-n_core)    far/outlier positions (raw)
+  header 48 B (UNCOMPRESSED): magic 'AGSP', u32 version=3, u32 count, u32 true_count,
+               u32 flags(bit0=subsampled), f32 bbox_lo[3], f32 bbox_hi[3], u32 n_core
+  ---- everything below is one gzip stream, inflated in the browser with DecompressionStream ----
+  pos   u16 x 3*n_core            core positions, quantized in bbox, MORTON ordered and stored as
+                                  deltas mod 2^16 along that curve (element 0 is absolute)
+        f32 x 3*(count-n_core)    far/outlier positions (raw, unordered)
   scale u8  x 3*count   log-scale quantized, ls = q/255*16 - 12
   rot   u8  x 4*count   unit quaternion (w,x,y,z), q = v/255*2 - 1
   rgba  u8  x 4*count   SH-DC colour + sigmoid(opacity)
 
+The Morton ordering is what makes this worth doing: in training order consecutive records are
+spatially unrelated and the stream is nearly incompressible (gzip reached only 90% of raw). Sorted
+along a Z-curve, neighbouring splats sit close together, their position deltas are small, and their
+scales, rotations and colours are locally correlated too.
+
 Usage:  python website/tools/build_site_data.py [cap_per_snapshot=300000] [all|splats|meta]
 """
 from __future__ import annotations
-import csv, json, math, struct, sys, time
+import csv, gzip, json, math, struct, sys, time
 from pathlib import Path
 import numpy as np
 from PIL import Image
 
 ROOT = Path(r"C:\Roman\3DGS_PROPOSAL")
 EVO = ROOT / "outputs" / "gaussian_evolution"
+EVO_WEB = ROOT / "outputs" / "gaussian_evolution_web"
 RL = ROOT / "outputs" / "agentic_rl_real"
 SITE = ROOT / "website"
 DATA = SITE / "data"
-CAP = int(sys.argv[1]) if len(sys.argv) > 1 else 300_000
-ONLY = sys.argv[2] if len(sys.argv) > 2 else "all"   # all | splats | meta
+CAP = int(sys.argv[1]) if len(sys.argv) > 1 else 300_000    # per-snapshot Gaussian cap; use a
+ONLY = sys.argv[2] if len(sys.argv) > 2 else "all"          # huge value for "keep everything"
+
+# Which scenes the site ships. stump is configured below but excluded: its six runs cost ~330 MB
+# of the bundle, and dropping them is what lets every remaining model be shipped UNCAPPED inside
+# the 1 GB GitHub Pages limit. Add it back here (and rebuild) if the budget ever allows.
+SITE_SCENES = ["train", "ignatius", "caterpillar"]
+
+# Instants kept as 3-D snapshots, reduced from the full set (5, 15, 30, 60, 120, 300, 600 s) to
+# spend the budget on Gaussians per frame rather than on frame count; the film strip and the
+# curves still cover every instant, because those are JPEGs and CSV rows rather than splats.
+KEEP_TAGS = {"t15s", "t30s", "t120s", "t300s"}
 
 POLICIES = {
     "3dgs": {"label": "3DGS controller", "checkpoint": "outputs/agentic_rl_real/final_accel_3dgs/checkpoints/selected_accel.pth",
@@ -49,34 +67,32 @@ POLICIES = {
 }
 BACKEND_LABEL = {"3dgs": "3DGS", "fastergs": "Faster-GS", "dash": "DashGaussian", "legs": "LeGS"}
 
+
+def web_runs(scene: str) -> dict:
+    """The six run directories scripts/run_web_snapshots.sh writes for a scene, per backend."""
+    return {be: (f"{scene}_{be}_agent", f"{scene}_{be}_baseline") for be in ("3dgs", "fastergs", "dash")}
+
+
 SCENES = {
     "train": {
         "label": "train", "dataset_label": "Tanks & Temples", "role": "held-out real scene",
         "dataset": ROOT / "archive/real_scenes/rl/train", "images": "images",
-        "runs": {"3dgs": ("3dgs_accel_agent", "3dgs_accel_baseline"),
-                 "fastergs": ("fastergs_base_accel_agent", "fastergs_base_accel_baseline"),
-                 "dash": ("dash_accel_agent", "dash_accel_baseline")},
+        "runs": web_runs("train"),
     },
     "ignatius": {
         "label": "ignatius", "dataset_label": "Tanks & Temples", "role": "held-out real scene",
         "dataset": ROOT / "archive/real_scenes/tandt/ignatius", "images": "images",
-        "runs": {"3dgs": ("ignatius_3dgs_agent", "ignatius_3dgs_baseline"),
-                 "fastergs": ("ignatius_fastergs_base_agent", "ignatius_fastergs_base_baseline"),
-                 "dash": ("ignatius_dash_agent", "ignatius_dash_baseline")},
+        "runs": web_runs("ignatius"),
     },
     "caterpillar": {
         "label": "caterpillar", "dataset_label": "Tanks & Temples", "role": "held-out real scene",
         "dataset": ROOT / "archive/real_scenes/tandt/caterpillar", "images": "images",
-        "runs": {"3dgs": ("caterpillar_3dgs_agent", "caterpillar_3dgs_baseline"),
-                 "fastergs": ("caterpillar_fastergs_base_agent", "caterpillar_fastergs_base_baseline"),
-                 "dash": ("caterpillar_dash_agent", "caterpillar_dash_baseline")},
+        "runs": web_runs("caterpillar"),
     },
     "stump": {
         "label": "stump", "dataset_label": "Mip-NeRF 360", "role": "zero-shot unbounded scene",
         "dataset": ROOT / "archive/real_scenes/mip360/stump", "images": "images_4",
-        "runs": {"3dgs": ("stump_3dgs_agent", "stump_3dgs_baseline"),
-                 "fastergs": ("stump_fastergs_base_agent", "stump_fastergs_base_baseline"),
-                 "dash": ("stump_dash_agent", "stump_dash_baseline")},
+        "runs": web_runs("stump"),
     },
 }
 
@@ -119,6 +135,19 @@ SCENE_META = {
 ACTION_FIELDS = ["block_steps", "densify_mode", "densification_interval", "prune_mode", "opacity_reset", "stop",
                  "densify_threshold_mult", "prune_opacity_threshold", "position_lr_mult", "feature_lr_mult",
                  "opacity_lr_mult", "scaling_lr_mult", "rotation_lr_mult"]
+
+
+def run_dir(name: str) -> Path:
+    """Snapshot run directory for `name`.
+
+    The site is built from outputs/gaussian_evolution_web: the 30k protocol replays written by
+    scripts/run_web_snapshots.sh, which carry the converged models and the same schedule the paper
+    reports. The older outputs/gaussian_evolution runs stopped at a 120 s horizon under a
+    7000-iteration cap -- a different protocol -- so they are only used if a run has not been
+    regenerated yet, and main() skips any scene that is not complete under one root.
+    """
+    p = EVO_WEB / name
+    return p if (p / "snapshots.csv").exists() else EVO / name
 
 
 def log(*a):
@@ -197,6 +226,16 @@ def cloud_basis(ply: Path) -> dict:
     return {"center": c.tolist(), "axes": Vt[:2].tolist(), "xlim": xl, "ylim": yl, "norm": max(ref, 1e-4)}
 
 
+def morton_codes(p: np.ndarray) -> np.ndarray:
+    """Z-order key from the top 10 bits of each quantized axis (1024^3 cells is ample here)."""
+    q = (p >> 6).astype(np.uint64)
+    out = np.zeros(len(q), dtype=np.uint64)
+    for b in range(10):
+        for a in range(3):
+            out |= ((q[:, a] >> np.uint64(b)) & np.uint64(1)) << np.uint64(3 * b + a)
+    return out
+
+
 def encode_splats(ply: Path, out: Path, cap: int, true_count: int, basis: dict | None = None, thumb: Path | None = None) -> dict:
     v = read_ply(ply)
     n0 = len(v)
@@ -241,7 +280,18 @@ def encode_splats(ply: Path, out: Path, cap: int, true_count: int, basis: dict |
     P = xyz[idx]
 
     pos_core = np.clip((P[:n_core] - lo) / np.maximum(hi - lo, 1e-9) * 65535.0 + 0.5, 0, 65535).astype(np.uint16)
-    pos_far = P[n_core:].astype("<f4")
+    if n_core > 1:
+        # reorder the core group along a Z-curve, carrying the attribute indices with it
+        z = np.argsort(morton_codes(pos_core), kind="stable")
+        idx[:n_core] = idx[:n_core][z]
+        pos_core = pos_core[z]
+    pos_far = xyz[idx[n_core:]].astype("<f4")
+    # delta along the curve, wrapping mod 2^16 so a jump between Z-curve cells stays 2 bytes
+    d_core = np.empty_like(pos_core)
+    if n_core:
+        d_core[0] = pos_core[0]
+        if n_core > 1:
+            d_core[1:] = ((pos_core[1:].astype(np.int32) - pos_core[:-1].astype(np.int32)) & 0xFFFF).astype(np.uint16)
     sc_q = np.clip((np.clip(ls[idx], -12.0, 4.0) + 12.0) / 16.0 * 255.0 + 0.5, 0, 255).astype(np.uint8)
     rot_q = np.clip((q[idx] + 1.0) * 0.5 * 255.0 + 0.5, 0, 255).astype(np.uint8)
     rgba = np.empty((n, 4), np.uint8)
@@ -249,19 +299,18 @@ def encode_splats(ply: Path, out: Path, cap: int, true_count: int, basis: dict |
     rgba[:, 3] = np.clip(alpha[idx] * 255.0 + 0.5, 1, 255).astype(np.uint8)
 
     flags = (1 if subsampled else 0)
-    header = struct.pack("<4sIIII3f3fI", b"AGSP", 2, n, int(true_count), flags, *lo.tolist(), *hi.tolist(), n_core)
+    header = struct.pack("<4sIIII3f3fI", b"AGSP", 3, n, int(true_count), flags, *lo.tolist(), *hi.tolist(), n_core)
     assert len(header) == 48
+    payload = b"".join((d_core.astype("<u2").tobytes(), pos_far.tobytes(),
+                        sc_q.tobytes(), rot_q.tobytes(), rgba.tobytes()))
+    raw_bytes = len(payload)
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "wb") as f:
         f.write(header)
-        f.write(pos_core.astype("<u2").tobytes())
-        f.write(pos_far.tobytes())
-        f.write(sc_q.tobytes())
-        f.write(rot_q.tobytes())
-        f.write(rgba.tobytes())
+        f.write(gzip.compress(payload, 6, mtime=0))     # mtime=0 keeps rebuilds byte-identical
     dropped_outside = n_far
     return {"kept": n, "ply_count": n0, "far": dropped_outside, "dropped_transparent": dropped_transparent,
-            "subsampled": subsampled, "bytes": out.stat().st_size, "pop": pop}
+            "subsampled": subsampled, "bytes": out.stat().st_size, "raw_bytes": raw_bytes + 48, "pop": pop}
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -350,7 +399,7 @@ def prev_stats(scene: str, be: str | None, method: str | None, tag: str) -> dict
 # ----------------------------------------------------------------------------- build
 def build_scene(scene: str, spec: dict, do_splats: bool) -> dict:
     out = {"label": spec["label"], "dataset": spec["dataset_label"], "role": spec["role"], "backends": {}}
-    first_run = EVO / spec["runs"]["3dgs"][0]
+    first_run = run_dir(spec["runs"]["3dgs"][0])
     cams = camera_json(first_run, scene)
     n_test = len([i for i in range(len(cams)) if i % 8 == 0])       # llffhold = 8, test cams are dumped first
     test = cams[:n_test]
@@ -389,11 +438,16 @@ def build_scene(scene: str, spec: dict, do_splats: bool) -> dict:
     for be, (agent_run, base_run) in spec["runs"].items():
         bo = {"label": BACKEND_LABEL[be], "policy": POLICIES[be], "methods": {}}
         for method, run in (("agent", agent_run), ("baseline", base_run)):
-            rd = EVO / run
+            rd = run_dir(run)
             meta = json.loads((rd / "meta.json").read_text())
             snaps = read_csv(rd / "snapshots.csv")
-            blocks = read_csv(rd / "blocks.csv")
-            timed = [r for r in snaps if r["tag"] not in ("init", "final")]
+            # the 120 s runs logged blocks.csv; the 30k protocol replays log stats.csv, which
+            # carries the same action columns plus per-block validation quality and cost
+            bf = rd / "blocks.csv"
+            blocks = read_csv(bf if bf.exists() else rd / "stats.csv")
+            for b in blocks:
+                b.setdefault("gaussians", b.get("N"))
+            timed = [r for r in snaps if r["tag"] in KEEP_TAGS]
             final = [r for r in snaps if r["tag"] == "final"]
             if final and (not timed or int(final[0]["iter"]) != int(timed[-1]["iter"])):
                 timed.append(final[0])
@@ -426,7 +480,8 @@ def build_scene(scene: str, spec: dict, do_splats: bool) -> dict:
                                 "file": rel, "render": render_rel, "cloud": cloud_rel, "stats": st})
             init_here = [x for x in snaps if x["tag"] == "init"][0]
             bo["methods"][method] = {
-                "run": run, "mode": meta["mode"], "horizon_s": meta["horizon_s"], "checkpoint": meta.get("checkpoint"),
+                "run": run, "mode": meta.get("mode", "acceleration"), "horizon_s": meta.get("horizon_s"),
+                "max_iter": meta.get("max_iter"), "checkpoint": meta.get("checkpoint"),
                 "init_psnr": float(init_here["psnr"]), "init_ssim": float(init_here["ssim"]),
                 "snapshots": entries,
                 "blocks": compact_blocks(blocks, keep_actions=True),
@@ -481,10 +536,19 @@ def main():
     t0 = time.time()
     manifest = {"generated": time.strftime("%Y-%m-%d"), "cap_per_snapshot": CAP, "scenes": {}, "policies": POLICIES,
                 "backend_labels": BACKEND_LABEL}
-    for scene, spec in SCENES.items():
-        missing = [r for pair in spec["runs"].values() for r in pair if not (EVO / r / "snapshots.csv").exists()]
+    for scene in SITE_SCENES:
+        spec = SCENES[scene]
+        runs = [r for pair in spec["runs"].values() for r in pair]
+        missing = [r for r in runs if not (run_dir(r) / "snapshots.csv").exists()]
         if missing:
             log(f"[{scene}] skipped, missing runs: {missing}")
+            continue
+        # A scene must come entirely from one protocol. Several old run directories happen to share
+        # the new naming, so a single failed replay would otherwise pair a 30k backend against a
+        # 120 s one and the wall-clock instants would not be comparable across the panels.
+        roots = {run_dir(r).parent.name for r in runs}
+        if len(roots) > 1:
+            log(f"[{scene}] SKIPPED, runs span two protocols: {sorted(roots)}")
             continue
         manifest["scenes"][scene] = build_scene(scene, spec, do_splats)
     if ONLY in ("all", "meta"):

@@ -1,7 +1,8 @@
 /* Interactive 3-D viewer: agent vs fixed schedule, same camera, same wall-clock time. */
-import { decodeAGSP } from './agsp.js';
-import { SplatRenderer } from './splat-renderer.js';
-import { COLORS, ACTION_LABEL, lineChart, stripChart, legend, fmtK, fmtT, showTip, hideTip } from './charts.js';
+import { decodeAGSP } from './agsp.js?v=3';
+import { SplatRenderer } from './splat-renderer.js?v=3';
+import { COLORS, ACTION_LABEL, lineChart, stripChart, legend, fmtK, fmtT, showTip, hideTip } from './charts.js?v=3';
+import { tagSeconds, tagLabel, timelineFor } from './tags.js?v=3';
 
 // ---------------------------------------------------------------- tiny vec/mat helpers
 const v3 = {
@@ -25,9 +26,6 @@ function viewMatrix(r, d, f, eye) {
     t[0], t[1], t[2], 1]);
 }
 
-const TAG_ORDER = ['init', 't5s', 't15s', 't30s', 't60s', 't120s'];
-const TAG_TIME = { init: 0, t5s: 5, t15s: 15, t30s: 30, t60s: 60, t120s: 120 };
-
 export class Viewer {
   constructor(root, manifest, dataBase) {
     this.root = root;
@@ -37,7 +35,8 @@ export class Viewer {
     this.backend = '3dgs';
     this.layout = 'side';       // side | wipe
     this.split = 0.5;
-    this.tagIndex = 3;          // start at 30 s
+    this.tags = ['init'];       // real timeline comes from the scene, in _setScene
+    this.tagIndex = 0;          // _setScene lands on the converged model
     this.playing = false;
     this.presetIndex = 0;
     this.photoAlpha = 0;
@@ -67,8 +66,6 @@ export class Viewer {
         <label>View <select id="v-preset"></select></label>
         <label class="photo-ctl" title="Blend the real photograph of the selected test camera over the rendering">Photo
           <input type="range" id="v-photo" min="0" max="1" step="0.05" value="0"></label>
-        <label title="Render the splats larger/smaller than their physical size">Splat size
-          <input type="range" id="v-size" min="0.4" max="1.6" step="0.05" value="1"></label>
         <button id="v-reset" class="btn-ghost">reset view</button>
       </div>
       <div class="stage" id="stage">
@@ -84,7 +81,7 @@ export class Viewer {
       <div class="timeline">
         <button id="v-play" class="btn-play" title="play through the snapshots">▶</button>
         <div class="slider-wrap">
-          <input type="range" id="v-time" min="0" max="5" step="1" value="3">
+          <input type="range" id="v-time" min="0" max="1" step="1" value="0">
           <div class="ticks" id="v-ticks"></div>
         </div>
         <div class="time-readout" id="v-readout"></div>
@@ -116,14 +113,12 @@ export class Viewer {
       if (be === this.backend) b.classList.add('on');
       bk.appendChild(b);
     }
-    const ticks = this.$('v-ticks');
-    for (const t of TAG_ORDER) { const s = document.createElement('span'); s.textContent = TAG_TIME[t] + ' s'; ticks.appendChild(s); }
   }
 
   _initGL() {
     const canvas = this.$('gl');
     try {
-      this.R = new SplatRenderer(canvas, new URL('./sort-worker.js', import.meta.url));
+      this.R = new SplatRenderer(canvas, new URL('./sort-worker.js?v=3', import.meta.url));
       this.R.onNeedsRedraw = () => this.requestFrame();
     } catch (e) {
       this.R = null;
@@ -140,6 +135,14 @@ export class Viewer {
     this.scene = scene;
     this.$('v-scene').value = scene;
     const S = this.sceneData;
+    // the timeline is per scene: a run that hits the 30k cap early has no late tags
+    this.tags = timelineFor(S);
+    this.tagIndex = this.tags.length - 1;      // open on the converged model, not on early training
+    const slider = this.$('v-time');
+    slider.max = String(this.tags.length - 1);
+    slider.value = String(this.tagIndex);
+    const ticks = this.$('v-ticks'); ticks.innerHTML = '';
+    for (const t of this.tags) { const sp = document.createElement('span'); sp.textContent = tagLabel(t); ticks.appendChild(sp); }
     const ps = this.$('v-preset'); ps.innerHTML = '';
     S.presets.forEach((p, i) => { const o = document.createElement('option'); o.value = i; o.textContent = p.name; ps.appendChild(o); });
     // world up from the test cameras (OpenCV camera y points down)
@@ -162,17 +165,18 @@ export class Viewer {
   _snapFor(method, tagIdx) {
     const S = this.sceneData;
     const run = this.runs[method];
-    const tag = TAG_ORDER[tagIdx];
+    const tag = this.tags[tagIdx];
     if (tag === 'init') return { tag: 'init', t: 0, iter: 0, N: S.init.N, psnr: run.init_psnr, ssim: run.init_ssim, file: S.init.file, render: run.render_init, stats: S.init.stats, shared: true };
     let e = run.snapshots.find(s => s.tag === tag);
     if (!e) {
-      // 'final' stands in for a missing 120 s snapshot (the baseline hit its iteration cap earlier)
+      // a run that reached the iteration cap before this instant has no tag for it; its final
+      // model is what it was showing at that wall-clock, so stand `final` in for any late tag
       const fin = run.snapshots.find(s => s.tag === 'final');
-      if (fin && tag === 't120s') e = fin;
+      if (fin && tagSeconds(tag) >= fin.t) e = fin;
     }
     if (!e) {
       // nearest by trigger time
-      const want = TAG_TIME[tag];
+      const want = tagSeconds(tag);
       e = run.snapshots.reduce((b, s) => (Math.abs(s.trigger_s - want) < Math.abs(b.trigger_s - want) ? s : b), run.snapshots[0]);
     }
     return e;
@@ -202,7 +206,7 @@ export class Viewer {
         buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
         buf = buf.buffer;
       } else buf = await res.arrayBuffer();
-      const dec = decodeAGSP(buf);
+      const dec = await decodeAGSP(buf);
       this.cache.set(rel, dec); this.cacheOrder.push(rel);
       while (this.cacheOrder.length > 10) { const old = this.cacheOrder.shift(); if (!this.currentFiles || !this.currentFiles.includes(old)) this.cache.delete(old); else this.cacheOrder.push(old); }
       this.loading.delete(rel);
@@ -243,7 +247,7 @@ export class Viewer {
   }
 
   _prefetchNeighbors() {
-    const next = this.tagIndex + 1 <= 5 ? this.tagIndex + 1 : null;
+    const next = this.tagIndex + 1 < this.tags.length ? this.tagIndex + 1 : null;
     if (next == null) return;
     for (const m of ['agent', 'baseline']) { const s = this._snapFor(m, next); if (!this.cache.has(s.file)) this._fetchDecoded(s.file).catch(() => {}); }
   }
@@ -311,7 +315,6 @@ export class Viewer {
     $('v-preset').addEventListener('change', (e) => this._applyPreset(+e.target.value));
     $('v-reset').addEventListener('click', () => this._applyPreset(this.presetIndex));
     $('v-photo').addEventListener('input', (e) => { this.photoAlpha = +e.target.value; this._updatePhoto(); });
-    $('v-size').addEventListener('input', (e) => { if (this.R) { this.R.splatScale = +e.target.value; this.requestFrame(); } });
     $('v-time').addEventListener('input', (e) => { this.tagIndex = +e.target.value; this._onTimeChange(); });
     $('v-play').addEventListener('click', () => this._togglePlay());
 
@@ -366,7 +369,7 @@ export class Viewer {
     new ResizeObserver(() => this.requestFrame()).observe(stage);
     document.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-      if (e.key === 'ArrowRight') { this.tagIndex = Math.min(5, this.tagIndex + 1); $('v-time').value = this.tagIndex; this._onTimeChange(); }
+      if (e.key === 'ArrowRight') { this.tagIndex = Math.min(this.tags.length - 1, this.tagIndex + 1); $('v-time').value = this.tagIndex; this._onTimeChange(); }
       if (e.key === 'ArrowLeft') { this.tagIndex = Math.max(0, this.tagIndex - 1); $('v-time').value = this.tagIndex; this._onTimeChange(); }
     });
   }
@@ -380,17 +383,19 @@ export class Viewer {
     this._loadCurrent();
   }
 
-  currentTime() { return TAG_TIME[TAG_ORDER[this.tagIndex]]; }
+  /** Wall-clock of the frame on screen. `final` is an iteration cap, not an instant, so the
+   *  agent's own finishing time is what the chart markers should point at. */
+  currentTime() { const e = this._snapFor('agent', this.tagIndex); return e ? e.t : 0; }
 
   _togglePlay() {
     this.playing = !this.playing;
     this.$('v-play').textContent = this.playing ? '❚❚' : '▶';
     if (this.playing) {
-      if (this.tagIndex >= 5) this.tagIndex = 0;
+      if (this.tagIndex >= this.tags.length - 1) this.tagIndex = 0;
       const step = () => {
         if (!this.playing) return;
         this.$('v-time').value = this.tagIndex; this._onTimeChange();
-        if (this.tagIndex >= 5) { this.playing = false; this.$('v-play').textContent = '▶'; return; }
+        if (this.tagIndex >= this.tags.length - 1) { this.playing = false; this.$('v-play').textContent = '▶'; return; }
         this.tagIndex++;
         this._playTimer = setTimeout(step, 1800);
       };
@@ -586,12 +591,16 @@ export class FrameStrip {
     const S = this.M.scenes[scene];
     const R = S.backends[backend].methods;
     const be = this.M.backend_labels[backend];
-    const tags = TAG_ORDER;
+    const tags = timelineFor(S);
     const cell = (method, tag) => {
       const run = R[method];
       let e;
       if (tag === 'init') e = { render: run.render_init, N: S.init.N, psnr: run.init_psnr, t: 0, iter: 0 };
-      else { e = run.snapshots.find(s => s.tag === tag) || (tag === 't120s' ? run.snapshots.find(s => s.tag === 'final') : null); }
+      else {
+        e = run.snapshots.find(s => s.tag === tag);
+        const fin = run.snapshots.find(s => s.tag === 'final');
+        if (!e && fin && tagSeconds(tag) >= fin.t) e = fin;
+      }
       if (!e || !e.render) return `<div class="fcell empty"><span class="dim">not reached</span></div>`;
       return `<div class="fcell"><img loading="lazy" src="${this.base + e.render}" alt="${method} at ${tag}">
         <div class="fcap"><b>${e.psnr.toFixed(2)} dB</b> · ${fmtK(e.N)} G · it ${e.iter.toLocaleString()}</div></div>`;
@@ -599,7 +608,7 @@ export class FrameStrip {
     const gt = R.agent.render_gt ? `<div class="fcell gt"><img loading="lazy" src="${this.base + R.agent.render_gt}" alt="ground truth photo"><div class="fcap">held-out photo</div></div>` : '';
     this.root.innerHTML = `
       <div class="fgrid" style="--cols:${tags.length + 1}">
-        <div class="frow-label"></div>${tags.map(t => `<div class="fhead">${TAG_TIME[t] === 0 ? 'init' : TAG_TIME[t] + ' s'}</div>`).join('')}<div class="fhead">reference</div>
+        <div class="frow-label"></div>${tags.map(t => `<div class="fhead">${tagLabel(t)}</div>`).join('')}<div class="fhead">reference</div>
         <div class="frow-label" style="color:${COLORS.agent}">Agent<br><span class="dim">${this.M.policies[backend].label}</span></div>${tags.map(t => cell('agent', t)).join('')}${gt}
         <div class="frow-label" style="color:${COLORS.base}">Fixed schedule<br><span class="dim">${be}</span></div>${tags.map(t => cell('baseline', t)).join('')}<div class="fcell empty"></div>
       </div>`;

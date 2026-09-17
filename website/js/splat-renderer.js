@@ -89,7 +89,7 @@ export class SplatRenderer {
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (e) => this._onSorted(e.data);
     this.onNeedsRedraw = null;
-    this.splatScale = 1.0;
+    this.splatScale = 1.0;      // physical size; the viewer no longer exposes a control for this
   }
 
   /** Upload a decoded AGSP set under an id (replaces any previous set with that id). */

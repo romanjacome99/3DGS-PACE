@@ -1,5 +1,5 @@
 /* Decisions explorer (per scene, per backend) and cross-backend transfer matrix. */
-import { COLORS, ACTION_LABEL, lineChart, stripChart, legend, multiplesChart, fmtK, fmtT } from './charts.js';
+import { COLORS, ACTION_LABEL, lineChart, stripChart, legend, multiplesChart, fmtK, fmtT } from './charts.js?v=3';
 
 const CONT_FIELDS = [
   { key: 'densify_threshold_mult', label: 'densify gradient threshold', short: 'densify thr.', lo: 0.25, hi: 4, log: true, def: 1 },

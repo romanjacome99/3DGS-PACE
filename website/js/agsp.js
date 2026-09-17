@@ -1,17 +1,33 @@
 /* AGSP decoder: quantized Gaussian snapshots produced by tools/build_site_data.py.
  *
- * header 48 B: 'AGSP', u32 version(2), u32 count, u32 true_count, u32 flags, f32 lo[3], f32 hi[3], u32 n_core
- * pos   u16 x 3*n_core (quantized in [lo,hi]) then f32 x 3*(count-n_core) raw
- * scale u8  x 3*count  (log-scale, ls = q/255*16-12)
- * rot   u8  x 4*count  (w,x,y,z, q = v/255*2-1)
+ * header 48 B, UNCOMPRESSED: 'AGSP', u32 version, u32 count, u32 true_count, u32 flags,
+ *                            f32 lo[3], f32 hi[3], u32 n_core
+ * ---- from v3 on, everything after the header is one gzip stream ----
+ * pos   u16 x 3*n_core   core positions quantized in [lo,hi], Morton ordered and delta-coded
+ *                        mod 2^16 along that curve (element 0 absolute)
+ *       f32 x 3*(count-n_core)   far/outlier positions, raw
+ * scale u8  x 3*count    log-scale, ls = q/255*16-12
+ * rot   u8  x 4*count    (w,x,y,z), q = v/255*2-1
  * rgba  u8  x 4*count
  *
- * decodeAGSP() returns { count, trueCount, subsampled, positions: Float32Array(3N), tex: Float32Array(12N) }
+ * v2 files are the same layout with no gzip and no reordering, and are still readable.
+ *
+ * decodeAGSP() resolves to { count, trueCount, subsampled, positions: Float32Array(3N), tex: Float32Array(12N) }
  * where tex holds three RGBA32F texels per splat:
  *   [x, y, z, alpha]  [c00, c01, c02, c11]  [c12, c22, rgbPacked, 0]
  * with c** the 3-D covariance and rgbPacked = r*65536 + g*256 + b (exact in f32).
  */
-export function decodeAGSP(buffer) {
+
+/** Inflate the payload of a v3 file. Uses the platform's own gzip, so there is no library to ship. */
+async function inflate(bytes) {
+  if (typeof DecompressionStream !== 'function') {
+    throw new Error('this browser cannot inflate gzip (DecompressionStream is missing)');
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+export async function decodeAGSP(buffer) {
   const dv = new DataView(buffer);
   const magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
   if (magic !== 'AGSP') throw new Error('not an AGSP file');
@@ -24,18 +40,29 @@ export function decodeAGSP(buffer) {
   const nCore = version >= 2 ? dv.getUint32(44, true) : n;
   const nFar = n - nCore;
 
-  let off = 48;
-  const posQ = new Uint16Array(buffer, off, 3 * nCore); off += 6 * nCore;
-  // f32 block may be unaligned (6*nCore may not be a multiple of 4) -> copy through DataView when needed
-  let posFar;
-  if (nFar > 0) {
-    if (off % 4 === 0) posFar = new Float32Array(buffer, off, 3 * nFar);
-    else { posFar = new Float32Array(3 * nFar); for (let i = 0; i < 3 * nFar; i++) posFar[i] = dv.getFloat32(off + 4 * i, true); }
-    off += 12 * nFar;
+  const tail = new Uint8Array(buffer, 48);
+  const body = version >= 3 ? await inflate(tail) : tail;
+  const bd = new DataView(body.buffer, body.byteOffset, body.byteLength);
+
+  let off = 0;
+  // the u16 block is only 2-byte aligned inside `body`, so read it through the DataView
+  const posQ = new Uint16Array(3 * nCore);
+  for (let i = 0; i < 3 * nCore; i++) posQ[i] = bd.getUint16(off + 2 * i, true);
+  off += 6 * nCore;
+  if (version >= 3 && nCore > 1) {
+    // undo the delta along the Z-curve: running sum per axis, wrapping at 2^16
+    for (let i = 1; i < nCore; i++) {
+      posQ[3 * i] = (posQ[3 * i] + posQ[3 * i - 3]) & 0xFFFF;
+      posQ[3 * i + 1] = (posQ[3 * i + 1] + posQ[3 * i - 2]) & 0xFFFF;
+      posQ[3 * i + 2] = (posQ[3 * i + 2] + posQ[3 * i - 1]) & 0xFFFF;
+    }
   }
-  const scaleQ = new Uint8Array(buffer, off, 3 * n); off += 3 * n;
-  const rotQ = new Uint8Array(buffer, off, 4 * n); off += 4 * n;
-  const rgba = new Uint8Array(buffer, off, 4 * n); off += 4 * n;
+  const posFar = new Float32Array(3 * nFar);
+  for (let i = 0; i < 3 * nFar; i++) posFar[i] = bd.getFloat32(off + 4 * i, true);
+  off += 12 * nFar;
+  const scaleQ = body.subarray(off, off + 3 * n); off += 3 * n;
+  const rotQ = body.subarray(off, off + 4 * n); off += 4 * n;
+  const rgba = body.subarray(off, off + 4 * n); off += 4 * n;
 
   const positions = new Float32Array(3 * n);
   const tex = new Float32Array(12 * n);

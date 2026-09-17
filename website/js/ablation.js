@@ -1,5 +1,5 @@
 /* Training-view ablation: does the controller still accelerate with fewer training cameras? */
-import { COLORS, lineChart, el, fmtK, fmtT, showTip, hideTip } from './charts.js';
+import { COLORS, lineChart, el, fmtK, fmtT, showTip, hideTip } from './charts.js?v=3';
 
 const SCENE_COLORS = { train: '#0072B2', ignatius: '#E69F00', caterpillar: '#009E73', barn: '#CC79A7' };
 

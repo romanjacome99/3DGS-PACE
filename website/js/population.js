@@ -1,9 +1,7 @@
 /* How the Gaussian population evolves along the iterations: count with per-block added/pruned,
  * top-view density thumbnails of the Gaussian centres, and distribution statistics at the snapshots. */
-import { COLORS, lineChart, el, fmtK, fmtT, showTip, hideTip } from './charts.js';
-
-const TAG_ORDER = ['init', 't5s', 't15s', 't30s', 't60s', 't120s'];
-const TAG_TIME = { init: 0, t5s: 5, t15s: 15, t30s: 30, t60s: 60, t120s: 120 };
+import { COLORS, lineChart, el, fmtK, fmtT, showTip, hideTip } from './charts.js?v=3';
+import { tagSeconds, tagLabel, timelineFor } from './tags.js?v=3';
 
 /** Bars of added (up) and pruned (down) Gaussians per block, with the count as a line on a second axis. */
 function growthChart(container, opts) {
@@ -73,11 +71,11 @@ function growthChart(container, opts) {
 export class Population {
   constructor(root, manifest, decisions, dataBase) {
     this.root = root; this.M = manifest; this.D = decisions; this.base = dataBase;
-    this.horizon = 'snap';   // snap (120 s, snapshot rollouts) | full (30k protocol rollouts)
+    this.horizon = 'snap';   // snap (the viewer's own snapshot rollout) | full (the evaluation rollout)
     this.root.innerHTML = `
       <div class="v-controls">
         <span id="p-caption" class="dim"></span>
-        <div class="seg" id="p-horizon"><button data-v="snap" class="on">first 120 s (snapshot rollouts)</button><button data-v="full">full 30k-iteration rollout</button></div>
+        <div class="seg" id="p-horizon"><button data-v="snap" class="on">snapshot rollout (drives the viewer)</button><button data-v="full">evaluation rollout</button></div>
       </div>
       <div class="pop-body">
         <h4>Gaussian centres seen from above, coloured by opacity-weighted density <span class="dim">(same frame for every panel)</span></h4>
@@ -104,18 +102,24 @@ export class Population {
     const cl = this.root.querySelector('#p-clouds');
     const cell = (method, tag) => {
       const run = R[method];
-      let e = tag === 'init' ? { cloud: S.init.cloud, N: S.init.N, iter: 0 } : (run.snapshots.find(s => s.tag === tag) || (tag === 't120s' ? run.snapshots.find(s => s.tag === 'final') : null));
+      let e = tag === 'init' ? { cloud: S.init.cloud, N: S.init.N, iter: 0 } : run.snapshots.find(s => s.tag === tag);
+      if (!e && tag !== 'init') {
+        // a run that hit the iteration cap before this instant stayed on its final model
+        const fin = run.snapshots.find(s => s.tag === 'final');
+        if (fin && tagSeconds(tag) >= fin.t) e = fin;
+      }
       if (!e || !e.cloud) return '<div class="fcell empty"><span class="dim">not reached</span></div>';
       return `<div class="fcell cloud"><img loading="lazy" src="${this.base + e.cloud}" alt="${method} Gaussian centres at ${tag}"><div class="fcap"><b>${fmtK(e.N)}</b> Gaussians · it ${e.iter.toLocaleString()}</div></div>`;
     };
-    cl.innerHTML = `<div class="fgrid" style="--cols:${TAG_ORDER.length}">
-      <div class="frow-label"></div>${TAG_ORDER.map(t => `<div class="fhead">${TAG_TIME[t] === 0 ? 'init' : TAG_TIME[t] + ' s'}</div>`).join('')}
-      <div class="frow-label" style="color:${COLORS.agent}">Agent</div>${TAG_ORDER.map(t => cell('agent', t)).join('')}
-      <div class="frow-label" style="color:${COLORS.base}">Fixed schedule</div>${TAG_ORDER.map(t => cell('baseline', t)).join('')}</div>`;
+    const tags = timelineFor(S);
+    cl.innerHTML = `<div class="fgrid" style="--cols:${tags.length}">
+      <div class="frow-label"></div>${tags.map(t => `<div class="fhead">${tagLabel(t)}</div>`).join('')}
+      <div class="frow-label" style="color:${COLORS.agent}">Agent</div>${tags.map(t => cell('agent', t)).join('')}
+      <div class="frow-label" style="color:${COLORS.base}">Fixed schedule</div>${tags.map(t => cell('baseline', t)).join('')}</div>`;
     // growth chart
     const g = this.root.querySelector('#p-growth');
     if (this.horizon === 'snap') {
-      growthChart(g, { agent: R.agent.blocks, baseline: R.baseline.blocks, initN: S.init.N, xKey: 'iter', xLabel: 'iteration (first 120 s of training; the agent picks longer blocks and runs more iterations per second when the model is small)',
+      growthChart(g, { agent: R.agent.blocks, baseline: R.baseline.blocks, initN: S.init.N, xKey: 'iter', xLabel: 'iteration (the agent picks longer blocks and runs more iterations per second when the model is small)',
         xFormat: (v) => v.toLocaleString(), label: (b) => `block ${b.block} · iter ${b.iter.toLocaleString()} · ${fmtT(b.t)}` });
     } else {
       const run = this.D.runs.find(r => r.kind === 'native' && r.scene === this.scene && r.backend === this.backend);
@@ -127,7 +131,9 @@ export class Population {
     const st = this.root.querySelector('#p-stats'); st.innerHTML = '';
     const series = (method, f) => {
       const run = R[method];
-      const pts = [{ iter: 0, t: 0, stats: S.init.stats }, ...run.snapshots.filter(s => s.tag !== 'final' || !run.snapshots.some(x => x.tag === 't120s'))];
+      // `final` repeats the last timed snapshot when the run hit the cap at that instant
+      const pts = [{ iter: 0, t: 0, stats: S.init.stats },
+                   ...run.snapshots.filter(s => s.tag !== 'final' || !run.snapshots.some(x => x.tag !== 'final' && +x.iter === +s.iter))];
       return { x: pts.map(p => p.iter), y: pts.map(p => p.stats && p.stats.pop ? f(p.stats.pop) : null) };
     };
     const panels = [
