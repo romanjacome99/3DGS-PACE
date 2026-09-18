@@ -31,7 +31,9 @@ LOG="$OUTROOT/run.log"
 
 CK_3dgs=outputs/agentic_rl_real/final_accel_3dgs/checkpoints/selected_accel.pth
 CK_fastergs=outputs/agentic_rl_real/real_fastergs_accel_aug_base/checkpoints/best.pth
-CK_dash=outputs/agentic_rl_real/final_accel_dash/checkpoints/selected_accel.pth
+# Dash: the fixed-horizon policy (dash.schedule_horizon_iterations=30000), the one Table 1 and the
+# cross-backend table report. Its configs pin the same horizon, so the viewer replays the paper's run.
+CK_dash=outputs/agentic_rl_real/final_accel_dash_fixed_horizon/checkpoints/policy_update_0109.pth
 
 # config per (scene, backend) -- taken from the summary.json of the corresponding protocol_* run,
 # so the website replays exactly what Table 1 and Table 2 were computed from.
@@ -48,9 +50,9 @@ cfg_for() {
                 *)     echo agentic_gs_phase1/configs/real_fastergs_accel_aug_base_tandt.json ;;
               esac ;;
     dash)     case "$1" in
-                train) echo configs/final_accel_dash.json ;;
+                train) echo configs/final_accel_dash_fixed_horizon.json ;;
                 stump) echo configs/final_accel_dash_stump.json ;;
-                *)     echo configs/final_accel_dash_tandt.json ;;
+                *)     echo configs/final_accel_dash_fixed_tandt.json ;;
               esac ;;
   esac
 }

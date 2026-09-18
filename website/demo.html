@@ -34,9 +34,9 @@
 
 <section id="viewer" class="wrap wide">
   <h2>Watch the reconstruction converge</h2>
-  <p>Both panels show the <b>same scene</b> after the <b>same wall-clock training time</b>, from the <b>same camera</b>: the controller on the left, that backend's fixed schedule on the right. Scrub the timeline, orbit the point cloud, switch backend or scene, and read the decision the agent took at that moment. The Gaussians are the actual training states saved at 15, 30, 120 and 300 s and at the end of the 30k-iteration rollout, for three Tanks &amp; Temples scenes the controllers never trained on (<i>train</i>, <i>ignatius</i>, <i>caterpillar</i>). Models are shipped <b>complete</b> up to 2 M Gaussians, which covers 85 of the 92 snapshots; only the seven largest <i>ignatius</i> models are thinned, and none below 66% of its splats.</p>
+  <p>Both panels show the <b>same scene</b> after the <b>same wall-clock training time</b>, from the <b>same camera</b>: the controller on the left, that backend's fixed schedule on the right. Scrub the timeline, orbit the point cloud, switch backend or scene, and read the decision the agent took at that moment. The Gaussians are the actual training states saved at 15, 30, 120 and 300 s and at the end of the 30k-iteration rollout, for three Tanks &amp; Temples scenes the controllers never trained on (<i>train</i>, <i>ignatius</i>, <i>caterpillar</i>). Models are shipped <b>complete</b> up to 2 M Gaussians, which covers 82 of the 89 snapshots; only the seven largest <i>ignatius</i> models are thinned, and none below 66% of its splats.</p>
   <div id="viewer-root"></div>
-  <p class="dim small">Viewer notes: snapshots are quantised for the web (16-bit positions, 8-bit colour, opacity, scale and rotation) and use only the view-independent colour band, so fine specular detail differs slightly from the CUDA renderer; snapshots above 300k Gaussians are thinned to their 300k most visible splats, the counts shown are the true ones. Backgrounds are black because unbounded scenes have no sky model.</p>
+  <p class="dim small">Viewer notes: snapshots are quantised for the web (16-bit positions, 8-bit colour, opacity, scale and rotation) and use only the view-independent colour band, so fine specular detail differs slightly from the CUDA renderer; snapshots above 2 M Gaussians are thinned to their 2 M most visible splats, the counts shown are the true ones. Backgrounds are black because unbounded scenes have no sky model.</p>
 </section>
 
 <section id="frames" class="wrap wide">
@@ -77,7 +77,7 @@
     <div>
       <h3>Where the data comes from</h3>
       <ul>
-        <li><b>Policies:</b> the frozen checkpoints evaluated in the paper — one PPO controller per backend (3DGS, Faster-GS, DashGaussian), each trained on a pool of ten real scenes (Tanks &amp; Temples, Deep Blending, Mip-NeRF 360) and selected by an acceleration-aware probe. None was retrained for this page.</li>
+        <li><b>Policies:</b> the frozen checkpoints evaluated in the paper — one PPO controller per backend (3DGS, Faster-GS, DashGaussian), each trained on a pool of ten real scenes (Tanks &amp; Temples, Deep Blending, Mip-NeRF 360) and selected by an acceleration-aware probe. The DashGaussian controller differs in one setting, a property of that backend rather than of the method: its coarse-to-fine horizon is pinned to the 30k evaluation cap during training too, without which the same recipe yields a policy that never densifies at all. None was retrained for this page.</li>
         <li><b>3-D snapshots:</b> the Gaussian state dumped the first time training crossed 15, 30, 120 and 300 s of wall-clock, plus the final model at the end of the rollout &mdash; 30k iterations, or earlier where a run hit the 3&nbsp;M-Gaussian safety rail, as <i>ignatius</i>/Faster-GS does at 11.6k. Each panel prints its own iteration count, so the two sides are always comparable at a glance. These are replays of the same protocol the paper reports (<code>scripts/run_web_snapshots.sh</code> driving <code>scripts/gaussian_evolution_study.py</code>), quantised for the browser and capped at 2 M splats per snapshot. The Mip-NeRF 360 <i>stump</i> scene is in the decision logs and the paper's tables but not in the 3-D viewer, because its six rollouts would not fit alongside models at this density.</li>
         <li><b>Decision logs, curves and time-to-target:</b> the evaluation protocol's per-block logs (<code>scripts/eval_protocol.py</code>): a 30k-iteration rollout per method, test PSNR sampled along the way, first-crossing times interpolated per target.</li>
         <li><b>Hardware:</b> all timings on one NVIDIA RTX 3090; the controller adds 5–7 ms per block (≤0.35% of training time).</li>
@@ -88,7 +88,7 @@
       <ul>
         <li>Single rollout per cell; the paper discloses this too. Wall-clock times include the backend's own densification cost.</li>
         <li>Unbounded Mip-NeRF 360 scenes drive the fixed schedule into the 3M-Gaussian safety cap within a few thousand iterations, which is why several baselines end early there.</li>
-        <li>The Dash controller under-builds on unbounded scenes it never saw (few Gaussians, lower PSNR): an honest limitation visible in the <i>stump</i> decision log.</li>
+        <li>The Dash controller is the one that depends on its backend&rsquo;s own schedule: it is evaluated with the same pinned 30k coarse-to-fine horizon it was trained on, and with that horizon mismatched the same recipe yields a controller that never densifies at all. It also keeps the smallest models of the three, which costs some fine texture even where PSNR is ahead.</li>
         <li>The web renderer is an approximation of the CUDA rasteriser (see the viewer notes); PSNR numbers everywhere come from the reference renderer.</li>
       </ul>
       <h3>Reproduce</h3>

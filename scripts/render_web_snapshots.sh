@@ -31,9 +31,9 @@ cfg_for() {
                 *)     echo agentic_gs_phase1/configs/real_fastergs_accel_aug_base_tandt.json ;;
               esac ;;
     dash)     case "$1" in
-                train) echo configs/final_accel_dash.json ;;
+                train) echo configs/final_accel_dash_fixed_horizon.json ;;
                 stump) echo configs/final_accel_dash_stump.json ;;
-                *)     echo configs/final_accel_dash_tandt.json ;;
+                *)     echo configs/final_accel_dash_fixed_tandt.json ;;
               esac ;;
   esac
 }
