@@ -15,7 +15,8 @@
     <a href="#summary">Summary</a>
     <a href="#workflow">How it works</a>
     <a href="#results">Results</a>
-    <a href="demo.html">Interactive demo</a>
+    <a href="#videos">Videos</a>
+    <a href="#actions">Decisions</a>
   </nav>
   <a class="gh" href="https://github.com/romanjacome99/Agentic3DGS" target="_blank" rel="noopener">GitHub ↗</a>
 </header>
@@ -26,7 +27,7 @@
   <h1>PACE: A Reinforcement-Learning Agent for Accelerated 3D Gaussian Splatting</h1>
   <p class="tldr">No more hand-tuning Gaussian Splatting trainers: an RL agent watches the optimisation and sets the schedule itself, when to densify, prune and reset and how fast to learn, reaching every quality target sooner on any trainer backend, with no per-scene or per-trainer tuning.</p>
   <div class="cta">
-    <a class="btn" href="demo.html">Open the interactive demo</a>
+    <a class="btn" href="#videos">Watch it train</a>
     <a class="btn-ghost" href="#results">Key results</a>
   </div>
   <figure class="pfig teaser">
@@ -81,13 +82,124 @@
 <tbody><tr><th>3DGS policy</th><td>399k/609k</td><td>20.86/20.83</td><td>1.54×</td> <td>1.84×</td> <td>2.10×</td> <td>2.41×</td> <td>1.52×</td><td class='hi'><b>1.86×</b></td></tr><tr><th>Faster-GS policy</th><td>720k/642k</td><td>21.35/20.87</td><td>3.05×</td> <td>2.27×</td> <td>1.27×</td> <td>1.00×</td> <td>1.27×</td><td class='hi'><b>1.62×</b></td></tr><tr><th>DashGaussian policy</th><td>482k/607k</td><td>20.86/20.34</td><td>3.31×</td> <td>2.40×</td> <td>1.82×</td> <td>1.75×</td> <td>1.33×</td><td class='hi'><b>2.02×</b></td></tr></tbody></table></div>
 <p class="cap"><b>Table 2.</b> Zero-shot transfer onto LeGS (held-out <i>train</i>): each trained policy run unchanged on the LeGS backend against LeGS's native per-Gaussian controller; speed-up per PSNR target and geometric mean.</p>
 <!-- TABLES:END -->
-  <p class="dim small">Also in the paper: the advantage persists with only 25–100 training views, and compaction turns into smaller models on disk with lower training memory. All of these rollouts can be explored block by block, with the 3-D reconstructions, in the <a href="demo.html">interactive demo</a>.</p>
+  <p class="dim small">Also in the paper: the advantage persists with only 25–100 training views, and compaction turns into smaller models on disk with lower training memory. The rollouts behind this table can be watched frame by frame <a href="#videos">below</a>.</p>
+</section>
+
+<section id="videos" class="wrap">
+  <h2>Watch it train</h2>
+  <p class="lede">The same scene trained twice, PACE on the left and the backend&rsquo;s fixed schedule on the right,
+  shown at the <b>same wall-clock time</b> throughout. The camera flies the capture&rsquo;s own trajectory while both
+  models step through the states saved at 0, 5, 15, 30, 60, 120, 300 and 600&nbsp;seconds and at the end of the run;
+  the panels underneath track Gaussian count, cost per iteration and held-out PSNR, with a marker on each curve.
+  Every scene is held out: no policy was trained on any of them.</p>
+
+  <div class="vpick">
+    <div class="vrow"><span class="vlab">Scene</span>
+      <button class="vbtn is-on" data-scene="train">train</button>
+      <button class="vbtn" data-scene="ignatius">ignatius</button>
+      <button class="vbtn" data-scene="caterpillar">caterpillar</button>
+    </div>
+    <div class="vrow"><span class="vlab">Backend</span>
+      <button class="vbtn is-on" data-backend="3dgs">3DGS</button>
+      <button class="vbtn" data-backend="fastergs">Faster-GS</button>
+      <button class="vbtn" data-backend="dash">DashGaussian</button>
+    </div>
+  </div>
+
+  <figure class="vwrap pfig">
+    <video id="evo" controls preload="none" playsinline poster="videos/train_3dgs.jpg">
+      <source src="videos/train_3dgs.mp4" type="video/mp4">
+      <p>Your browser cannot play this video. <a href="videos/train_3dgs.mp4">Download it instead</a>.</p>
+    </video>
+    <figcaption id="evocap"><b>train &mdash; 3DGS.</b> PACE matches the fixed schedule&rsquo;s quality with half the
+    Gaussians, and every remaining iteration is cheaper: 662&nbsp;s and 0.72M splats against 1022&nbsp;s and 1.46M.</figcaption>
+  </figure>
+
+  <p class="dim small">Rendered from the Gaussian states saved along the very rollouts the tables above report.
+  Nothing was retrained, and the reconstructions are the reference CUDA rasteriser&rsquo;s, not a web approximation.
+  1080p, 36&nbsp;s each &mdash; direct files:
+  <span id="vlinks"></span></p>
+</section>
+
+<section id="actions" class="wrap">
+  <h2>What the policy actually decides</h2>
+  <p class="lede">The videos show the effect; these show the cause. Each block, the controller picks when to densify,
+  prune and reset, and by how much to scale the thresholds and the five learning rates. The schedules it arrives at are
+  different for every backend, and none of them looks like the hand-tuned recipe.</p>
+
+  <figure class="pfig">
+    <img src="figures/pace_mechanism_actions.svg" loading="lazy"
+         alt="Per-block decisions on train for three backends: densifier on or off, opacity resets, pruning blocks, threshold and learning-rate multipliers, mean opacity and median scale.">
+    <figcaption><b>Held-out <i>train</i>, one column per backend</b> (PACE in the backend&rsquo;s colour, fixed schedule in grey).
+    <em>(a) When:</em> blocks with the densifier on (coloured) or off (grey); the fixed schedule densifies until iteration 15k.
+    &#9660; marks an opacity reset (mean opacity dropping more than 30% between blocks), | a block with opacity-and-size pruning.
+    <em>(b, c) How much:</em> the densification- and prune-threshold multipliers and the five learning-rate multipliers chosen per
+    block, relative to the backend&rsquo;s default (dashed line at 1, log scale). <em>(d, e):</em> mean opacity and median Gaussian
+    scale. Single seed.</figcaption>
+  </figure>
+
+  <figure class="pfig">
+    <img src="figures/pace_mechanism_ignatius_actions.svg" loading="lazy"
+         alt="The same per-block decision panels for the held-out ignatius scene.">
+    <figcaption><b>Held-out <i>ignatius</i>.</b> The same panels on a denser scene, where the fixed schedules plateau and PACE
+    reaches their quality about twice as fast.</figcaption>
+  </figure>
+
+  <figure class="pfig">
+    <img src="figures/pace_mechanism_caterpillar50k_actions.svg" loading="lazy"
+         alt="The same per-block decision panels for caterpillar over a 50k-iteration rollout.">
+    <figcaption><b>Held-out <i>caterpillar</i>, 50k iterations.</b> Run well past the 30k the schedules were tuned for: the fixed
+    recipes drift while the controller keeps choosing, which is where the gap widens rather than closes.</figcaption>
+  </figure>
 </section>
 
 <section class="wrap landing-foot">
-  <div class="cta"><a class="btn" href="demo.html">Open the interactive demo</a><a class="btn-ghost" href="https://github.com/romanjacome99/Agentic3DGS" target="_blank" rel="noopener">Code on GitHub</a></div>
-  <p class="dim small">© Román Alejandro Jácome Carrascal. Companion page to “PACE: A Reinforcement-Learning Agent for Accelerated 3D Gaussian Splatting”. Figures are exported from the manuscript sources.</p>
+  <div class="cta"><a class="btn" href="#videos">Watch it train</a><a class="btn-ghost" href="https://github.com/romanjacome99/Agentic3DGS" target="_blank" rel="noopener">Code on GitHub</a></div>
+  <p class="dim small">© Román Alejandro Jácome Carrascal. Companion page to “PACE: A Reinforcement-Learning Agent for Accelerated 3D Gaussian Splatting”. Figures and videos are built from the manuscript&rsquo;s own runs.</p>
 </section>
 </main>
+<script>
+(function () {
+  var CAP = {
+    "train|3dgs": "<b>train &mdash; 3DGS.</b> PACE matches the fixed schedule\u2019s quality with half the Gaussians, and every remaining iteration is cheaper: 662\u00a0s and 0.72M splats against 1022\u00a0s and 1.46M.",
+    "train|fastergs": "<b>train &mdash; Faster-GS.</b> The opposite trade: where a Gaussian is cheap the policy grows past the fixed schedule, to 1.73M against 1.39M, and spends the capacity on quality (+0.9\u00a0dB).",
+    "train|dash": "<b>train &mdash; DashGaussian.</b> Compaction at its strongest: 451\u00a0s and 0.43M splats against 825\u00a0s and 1.22M, ending ahead on PSNR.",
+    "ignatius|3dgs": "<b>ignatius &mdash; 3DGS.</b> The fixed schedule plateaus; PACE reaches the same quality about twice as fast and ends with a third fewer Gaussians.",
+    "ignatius|fastergs": "<b>ignatius &mdash; Faster-GS.</b> The growth-oriented policy runs into the 3M-Gaussian safety rail at iteration 11.6k and stops there, the one case in the nine where it ends behind on final quality.",
+    "ignatius|dash": "<b>ignatius &mdash; DashGaussian.</b> The strongest of the nine: 499\u00a0s, 0.71M and 24.06\u00a0dB against 825\u00a0s, 1.88M and 22.83\u00a0dB \u2014 faster, smaller and better.",
+    "caterpillar|3dgs": "<b>caterpillar &mdash; 3DGS.</b> Same pattern as on train: growth frozen early, iterations cheaper from then on.",
+    "caterpillar|fastergs": "<b>caterpillar &mdash; Faster-GS.</b> Grows past the schedule again and converts the capacity into quality.",
+    "caterpillar|dash": "<b>caterpillar &mdash; DashGaussian.</b> 451\u00a0s and 0.39M splats against 670\u00a0s and 1.04M, at matched quality; the two renders are hard to tell apart."
+  };
+  var scene = "train", backend = "3dgs";
+  var vid = document.getElementById("evo"), cap = document.getElementById("evocap");
+  var src = vid.querySelector("source");
+
+  document.getElementById("vlinks").innerHTML = Object.keys(CAP).map(function (k) {
+    var n = k.replace("|", "_");
+    return '<a href="videos/' + n + '.mp4">' + k.replace("|", "/") + "</a>";
+  }).join(" &middot; ");
+
+  function show() {
+    var n = scene + "_" + backend;
+    var playing = !vid.paused;
+    src.src = "videos/" + n + ".mp4";
+    vid.poster = "videos/" + n + ".jpg";
+    vid.load();
+    cap.innerHTML = CAP[scene + "|" + backend];
+    if (playing) { vid.play(); }
+  }
+  document.querySelectorAll(".vbtn").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var key = b.dataset.scene ? "scene" : "backend";
+      var row = b.parentNode;
+      row.querySelectorAll(".vbtn").forEach(function (o) { o.classList.remove("is-on"); });
+      b.classList.add("is-on");
+      if (key === "scene") { scene = b.dataset.scene; } else { backend = b.dataset.backend; }
+      show();
+    });
+  });
+})();
+</script>
 </body>
 </html>

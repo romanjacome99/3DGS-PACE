@@ -244,3 +244,18 @@ main { padding-bottom: 60px; }
 .demo-intro { padding-bottom: 0; }
 .demo-intro h1 { font-size: 1.8rem; }
 @media (max-width: 900px) { .tiles-row { grid-template-columns: repeat(2, 1fr); } }
+
+/* ---- video picker (landing) ------------------------------------------------ */
+.vpick { display: flex; flex-direction: column; gap: 10px; margin: 18px 0 14px; }
+.vrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.vlab { font-size: 13px; color: var(--dim, #667); width: 74px; flex: none; }
+.vbtn { font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 999px; cursor: pointer;
+        border: 1px solid #d7dde5; background: #fff; color: #24303d; }
+.vbtn:hover { border-color: #9fb3c8; }
+.vbtn.is-on { background: #1f6fb2; border-color: #1f6fb2; color: #fff; }
+.vwrap { margin: 0; }
+.vwrap video { width: 100%; height: auto; display: block; border-radius: 8px;
+               background: #0d1117; box-shadow: 0 1px 3px rgba(16,24,40,.12); }
+.vmeta { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; font-size: 13.5px; }
+.vmeta b { font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .vlab { width: 100%; } }

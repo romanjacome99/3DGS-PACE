@@ -21,6 +21,7 @@ from .spaces import (
     default_action,
     fastergs_aa_enabled,
     fastergs_ext_enabled,
+    observation_keep_indices,
     observation_names_for,
 )
 
@@ -94,6 +95,10 @@ class AgenticGSEnv:
         # for a consistent, reachable accel-checkpoint evaluation).
         self.budget_override = None
         self.observation_names = observation_names_for(config)
+        # State-vector ablation (opt-in via config["ablation"]["dropped_observations"]):
+        # the env still computes every channel, then keeps only these indices.
+        self._full_observation_names = observation_names_for(config, include_dropped=True)
+        self._obs_keep_indices = observation_keep_indices(config)
         # FasterGS-specific policy extension (opt-in). When on, the env applies the
         # extra actions (antialiasing / SH-unlock gate) and emits the extra
         # observations (per-stage GPU-time fractions + coverage stats). Off => base.
@@ -110,6 +115,8 @@ class AgenticGSEnv:
         self.dash_enabled = bool(dash_cfg.get("enabled", getattr(self.backend, "is_dash", False)))
         self.dash_cfg = dash_cfg
         self._dash = None
+        # Iteration horizon the Dash curriculum is built against; set in reset(). None until then.
+        self.dash_schedule_horizon = None
         self._current_res_scale = 1.0 / max(1.0, float(config.get("resolution", 1)))
         self.seed = int(seed)
         self.rng = random.Random(self.seed)
@@ -195,6 +202,10 @@ class AgenticGSEnv:
         self.dataset = self._dataset_args(scene_path, self.model_path)
         self.opt = self._optimization_args()
         self.pipe = self._pipeline_args()
+        if getattr(self.backend, "is_legs", False):
+            # LeGS: inject its argument defaults onto opt and bind it so the
+            # model can build its inner per-Gaussian RL controller.
+            self.backend.attach_opt(self.opt, self.config)
         self.gaussians = self.backend.make_gaussians(self.dataset.sh_degree, self.opt.optimizer_type)
         self.scene = self.backend.make_scene(self.dataset, self.gaussians)
         self.gaussians.training_setup(self.opt)
@@ -210,9 +221,25 @@ class AgenticGSEnv:
         self._current_res_scale = 1.0 / max(1.0, float(self.config.get("resolution", 1)))
         if self.dash_enabled:
             dcfg = self.dash_cfg
+            # DashGaussian's resolution curriculum and its resolution-coupled primitive budget
+            # are a property of the TRAINING RUN being scheduled, not of how long one RL episode
+            # happens to be. Keying them to self.opt.iterations (= max_episode_iterations) makes
+            # the substrate itself change shape between training and evaluation: with a 7k episode
+            # cap the resolution ramp completes at 6.3k, so a 3k training episode ends at 48% of
+            # the ramp, while at the 30k evaluation cap the ramp completes at 27k and iteration 3k
+            # is only 11% of the way up. The policy is then trained on one curriculum and evaluated
+            # on another, and since the budget's allowed growth scales with scale^2, densification
+            # is suppressed to a different degree in each. Set dash.schedule_horizon_iterations to
+            # the deployment horizon (e.g. 30000) to pin the curriculum to a fixed horizon in both.
+            # Absent/0 keeps the historical behaviour, so existing configs and every published Dash
+            # result are unchanged.
+            dash_horizon = int(dcfg.get("schedule_horizon_iterations", 0) or 0)
+            if dash_horizon <= 0:
+                dash_horizon = int(self.opt.iterations)
+            self.dash_schedule_horizon = dash_horizon
             self._dash = DashScheduler(
                 [c.original_image for c in self.train_cameras],
-                max_steps=int(self.opt.iterations),
+                max_steps=dash_horizon,
                 densify_until_iter=int(self.opt.densify_until_iter),
                 mode=str(dcfg.get("mode", "freq")),
                 max_reso_scale=float(dcfg.get("max_reso_scale", 8.0)),
@@ -487,7 +514,8 @@ class AgenticGSEnv:
         # resolution for this iteration; validation/eval stay full-res elsewhere.
         render_cam = viewpoint_cam
         gt_image = viewpoint_cam.original_image.cuda()
-        alpha_mask = viewpoint_cam.alpha_mask
+        # LeGS cameras pre-multiply the alpha mask into the image (no attribute).
+        alpha_mask = getattr(viewpoint_cam, "alpha_mask", None)
         if self._dash is not None:
             scale = self._dash.res_scale(self.iteration)
             self._current_res_scale = scale
@@ -523,6 +551,8 @@ class AgenticGSEnv:
 
         densify_stats = {"added": 0, "pruned": 0}
         densify_event = 0
+        is_legs = getattr(self.backend, "is_legs", False)
+        legs_densify_due = False
         with torch.no_grad():
             if self.iteration < self.opt.densify_until_iter:
                 self.backend.accumulate_densification_stats(self.gaussians, render_out)
@@ -534,34 +564,64 @@ class AgenticGSEnv:
                     cur = int(self.gaussians.get_xyz.shape[0])
                     dash_allows_growth = cur < self._dash.primitive_budget(self.iteration, cur)
                 if self._should_apply_densification(controls):
-                    densify_event = 1
-                    size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
-                    threshold = self._controlled_densify_threshold(controls)
-                    prune_mode = "opacity_only" if controls.prune_mode == "opacity_only" else controls.prune_mode
-                    densify_stats = self.gaussians.densify_and_prune_controlled(
-                        threshold,
-                        self._effective_prune_opacity_threshold(controls),
-                        self.scene.cameras_extent,
-                        size_threshold,
-                        radii,
-                        densify_enabled=controls.densify_mode != "off" and dash_allows_growth,
-                        prune_mode=prune_mode,
-                        min_remaining=self._min_remaining_gaussians(),
-                    )
+                    if is_legs:
+                        # LeGS ADC needs autograd (its state features are per-
+                        # Gaussian gradients) and must run after the optimizer
+                        # step; deferred below.
+                        legs_densify_due = controls.densify_mode != "off"
+                    else:
+                        densify_event = 1
+                        size_threshold = 20 if self.iteration > self.opt.opacity_reset_interval else None
+                        threshold = self._controlled_densify_threshold(controls)
+                        prune_mode = "opacity_only" if controls.prune_mode == "opacity_only" else controls.prune_mode
+                        densify_stats = self.gaussians.densify_and_prune_controlled(
+                            threshold,
+                            self._effective_prune_opacity_threshold(controls),
+                            self.scene.cameras_extent,
+                            size_threshold,
+                            radii,
+                            densify_enabled=controls.densify_mode != "off" and dash_allows_growth,
+                            prune_mode=prune_mode,
+                            min_remaining=self._min_remaining_gaussians(),
+                        )
             if ev is not None:
                 ev[3].record()
 
             if self.iteration < self.opt.iterations:
-                self.gaussians.exposure_optimizer.step()
-                self.gaussians.exposure_optimizer.zero_grad(set_to_none=True)
-                if self.opt.optimizer_type == "sparse_adam" and self.backend.SPARSE_ADAM_AVAILABLE:
+                exposure_opt = getattr(self.gaussians, "exposure_optimizer", None)
+                if exposure_opt is not None:
+                    exposure_opt.step()
+                    exposure_opt.zero_grad(set_to_none=True)
+                if is_legs:
+                    # LeGS's lazy dual-optimizer schedule (SH band stepped less
+                    # often) is part of its speed; use it verbatim.
+                    self.gaussians.optimizer_step(self.iteration)
+                elif self.opt.optimizer_type == "sparse_adam" and self.backend.SPARSE_ADAM_AVAILABLE:
                     visible = radii > 0
                     self.gaussians.optimizer.step(visible, radii.shape[0])
+                    self.gaussians.optimizer.zero_grad(set_to_none=True)
                 else:
                     self.gaussians.optimizer.step()
-                self.gaussians.optimizer.zero_grad(set_to_none=True)
+                    self.gaussians.optimizer.zero_grad(set_to_none=True)
             if ev is not None:
                 ev[4].record()
+
+        if is_legs:
+            # LeGS ADC + efficient delayed reward, outside no_grad (the state
+            # features need backward passes of their own; grads are consumed
+            # after the optimizer step so the main update is unaffected).
+            if legs_densify_due:
+                allow_growth = int(self.gaussians.get_xyz.shape[0]) < self._hard_stop_gaussians()
+                densify_stats = self.backend.legs_adc(
+                    self.gaussians, self.train_cameras, self.pipe, self.background,
+                    self.iteration,
+                    grad_scale=float(controls.densify_threshold_mult),
+                    allow_growth=allow_growth,
+                )
+                densify_event = 1
+            self.backend.legs_reward_tick(
+                self.gaussians, self.pipe, self.background, self.iteration
+            )
 
         if ev is not None:
             self._fgs_ev.append(ev)
@@ -598,12 +658,20 @@ class AgenticGSEnv:
             "scaling": self.opt.scaling_lr,
             "rotation": self.opt.rotation_lr,
         }
+        if getattr(self.backend, "is_legs", False):
+            # LeGS splits SH into two optimizers with its own base lrs.
+            base_lrs["f_dc"] = float(self.opt.lowfeature_lr)
         for group in self.gaussians.optimizer.param_groups:
             name = group["name"]
             if name == "xyz":
                 group["lr"] *= mults[name]
             elif name in base_lrs:
                 group["lr"] = base_lrs[name] * mults[name]
+        sh_optimizer = getattr(self.gaussians, "shoptimizer", None)
+        if sh_optimizer is not None:
+            for group in sh_optimizer.param_groups:
+                if group["name"] == "f_rest":
+                    group["lr"] = (float(self.opt.highfeature_lr) / 20.0) * mults["f_rest"]
 
     def _compactness_regularizer(self, controls) -> torch.Tensor:
         """Opacity / volume regularization added to the photometric loss.
@@ -944,10 +1012,22 @@ class AgenticGSEnv:
         min_stop_iter = int(self.config.get("safety", {}).get("min_iterations_before_stop", 500))
         return controls.stop == "stop" and self.iteration >= min_stop_iter
 
+    def _hard_stop_gaussians(self) -> int:
+        """Population that ENDS the episode.
+
+        Separate from safety.hard_max_gaussians, which also normalises five observation features
+        (count, growth, added, pruned). Raising that one to let a run continue would rescale the
+        policy's inputs and so change the controller itself; safety.hard_stop_gaussians moves only
+        the termination threshold and defaults to hard_max_gaussians, so every existing config
+        keeps its current behaviour.
+        """
+        safety = self.config.get("safety", {})
+        return int(safety.get("hard_stop_gaussians",
+                              safety.get("hard_max_gaussians", 3_000_000)))
+
     def _hard_budget_exceeded(self) -> bool:
         safety = self.config.get("safety", {})
-        max_gaussians = int(safety.get("hard_max_gaussians", 3_000_000))
-        if int(self.gaussians.get_xyz.shape[0]) > max_gaussians:
+        if int(self.gaussians.get_xyz.shape[0]) > self._hard_stop_gaussians():
             return True
         max_vram = float(safety.get("hard_max_vram_gb", 24.0))
         return _memory_gb()["peak"] > max_vram
@@ -1059,6 +1139,11 @@ class AgenticGSEnv:
             if self.fastergs_aa:
                 obs.append(block_stats.get("fgs_antialiasing_on", 0.0))
         obs = np.asarray([_clip01(float(v)) for v in obs], dtype=np.float32)
+        if obs.shape[0] != len(self._full_observation_names):
+            raise RuntimeError(
+                f"Observation length mismatch: {obs.shape[0]} != {len(self._full_observation_names)}")
+        if len(self._obs_keep_indices) != obs.shape[0]:
+            obs = obs[self._obs_keep_indices]          # state-vector ablation
         if obs.shape[0] != len(self.observation_names):
             raise RuntimeError(f"Observation length mismatch: {obs.shape[0]} != {len(self.observation_names)}")
         return obs
@@ -1213,6 +1298,10 @@ class AgenticGSEnv:
             "validation_camera_names": [camera.image_name for camera in self.validation_cameras],
             "test_camera_accessed_for_reward_or_state": False,
             "observation_names": self.observation_names,
+            # horizon the Dash curriculum was built against (None when the backend is not Dash);
+            # equals the episode cap unless dash.schedule_horizon_iterations pins it
+            "dash_schedule_horizon": self.dash_schedule_horizon,
+            "episode_iteration_cap": int(self.opt.iterations) if self.opt is not None else None,
             "config": self.config,
         }
         with (self.model_path / "agentic_episode_metadata.json").open("w") as f:
