@@ -31,8 +31,8 @@
     <a class="btn-ghost" href="#results">Key results</a>
   </div>
   <figure class="pfig teaser">
-    <img src="figures/teaser.svg" alt="Left: one held-out view at four early wall-clock instants, PACE above the fixed schedule. Right: geometric-mean wall-clock to train a held-out scene to its plateau and mean Gaussian count at the end of the run, fixed schedule vs PACE.">
-    <figcaption><b>PACE accelerates 3DGS training.</b> <em>Left:</em> one held-out view at four early wall-clock instants, PACE above the fixed schedule. <em>Right:</em> geometric-mean wall-clock needed to train a held-out scene to its plateau, each backend&rsquo;s fixed schedule (hollow bars) against PACE (solid bars) and labelled with the plateau speed-up, and the mean Gaussian count at the end of the run. Per-scene values in Table&nbsp;1.</figcaption>
+    <img src="figures/teaser.svg" alt="Left: one held-out view at four early wall-clock instants, PACE above the fixed schedule, for each of the three backends. Right: wall-clock to train a held-out scene to its plateau against the test PSNR finally reached, averaged over the six test scenes, with arrows labelled by speed-up.">
+    <figcaption><b>PACE accelerates 3DGS training.</b> <em>Left:</em> one held-out view at four early wall-clock instants, PACE above the fixed schedule, for each of the three backends; the numbers are PSNR&nbsp;(dB)&nbsp;/&nbsp;LPIPS against the ground truth. <em>Right:</em> wall-clock needed to train a held-out scene to its plateau against the test PSNR it finally reaches, averaged over the six test scenes, with each arrow labelled by the speed-up. Up and to the left is better. Per-scene values in Table&nbsp;1.</figcaption>
   </figure>
 </section>
 
@@ -85,7 +85,7 @@
   <p class="dim small">Also in the paper: the advantage persists with only 25–100 training views, and compaction turns into smaller models on disk with lower training memory. The rollouts behind this table can be watched frame by frame <a href="#videos">below</a>.</p>
 </section>
 
-<section id="videos" class="wrap">
+<section id="videos" class="wrap vwide">
   <h2>Watch it train</h2>
   <p class="lede">The same scene trained twice, PACE on the left and the backend&rsquo;s fixed schedule on the right,
   shown at the <b>same wall-clock time</b> throughout. The camera flies the capture&rsquo;s own trajectory while both

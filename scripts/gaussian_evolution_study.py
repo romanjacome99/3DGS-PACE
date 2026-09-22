@@ -185,7 +185,7 @@ def main() -> int:
                "op_mean": round(st["op_mean"], 4), "frac_opaque": round(st["frac_opaque"], 4),
                "scale_q50": round(st["scale_q50"], 5), "file": f.name}
         if args.save_ply:
-            # column name expected by scripts/render_snapshots.py and website/tools/build_site_data.py
+            # column name expected by scripts/render_snapshots.py and scripts/make_evolution_video.py
             rec["ply"] = f"snap_{tag}.ply"
         snaps.append(rec)
         print(f"[snap {tag:>7}] it={rec['iter']:6d} t={rec['time_s']:7.1f}s N={st['N']:8d} "

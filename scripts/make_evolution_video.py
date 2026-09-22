@@ -308,19 +308,19 @@ def build_curve_strip(meta: dict, size: tuple[int, int]):
     maps = []
     for ax, (key, label, fmt) in zip(axes, panels):
         ax.plot(stats["baseline"]["t"], stats["baseline"][key], color=BASELINE_COLOUR,
-                lw=1.6, ls="--", label="fixed schedule", zorder=2)
-        ax.plot(stats["agent"]["t"], stats["agent"][key], color=colour, lw=2.0,
+                lw=2.2, ls="--", label="fixed schedule", zorder=2)
+        ax.plot(stats["agent"]["t"], stats["agent"][key], color=colour, lw=2.8,
                 label="PACE", zorder=3)
-        ax.set_xlabel("wall-clock training time (s)", fontsize=9)
-        ax.set_title(label, fontsize=11, loc="left")
-        ax.tick_params(labelsize=8)
+        ax.set_xlabel("wall-clock training time (s)", fontsize=12)
+        ax.set_title(label, fontsize=14, loc="left")
+        ax.tick_params(labelsize=11)
         ax.grid(alpha=0.25, lw=0.6)
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
         if fmt is not None:
             ax.yaxis.set_major_formatter(
                 matplotlib.ticker.FuncFormatter(lambda v, _p, _f=fmt: _f(v)))
-    axes[0].legend(fontsize=9, loc="upper left", frameon=False)
+    axes[0].legend(fontsize=12, loc="upper left", frameon=False)
     fig.tight_layout(pad=1.4)
     fig.canvas.draw()
 
@@ -361,9 +361,17 @@ def draw_marker(strip, maps, stats, t_agent, t_base, colour_bgr, base_bgr):
                 top = mp["h"] - (mp["y0"] + mp["ys"] * yhi)
                 bot = mp["h"] - (mp["y0"] + mp["ys"] * ylo)
                 cv2.line(img, (x, int(round(top))), (x, int(round(bot))), (200, 200, 200), 1)
-            cv2.circle(img, (x, y), 5, col, -1)
-            cv2.circle(img, (x, y), 5, (255, 255, 255), 1)
+            cv2.circle(img, (x, y), 7, col, -1)
+            cv2.circle(img, (x, y), 7, (255, 255, 255), 2)
     return img
+
+
+def hex_rgb_light(h: str, amount: float = 0.45) -> tuple[int, int, int]:
+    """The backend hue, lifted toward white: it is drawn on a darkened plate over the render, where
+    the print colour (3DGS blue especially) is too dark to read once the page scales the video down."""
+    h = h.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return tuple(int(c + (255 - c) * amount) for c in (r, g, b))
 
 
 def hex_bgr(h: str) -> tuple[int, int, int]:
@@ -387,7 +395,7 @@ def cmd_compose(args) -> int:
         return 2
     ph, pw = probe.shape[:2]
 
-    W, gutter, margin, header = args.width, 16, 24, 74
+    W, gutter, margin, header = args.width, 16, 24, 90
     panel_w = (W - 2 * margin - gutter) // 2
     panel_h = int(round(panel_w * ph / pw))
     strip_h = args.height - header - panel_h - 2 * margin
@@ -398,10 +406,10 @@ def cmd_compose(args) -> int:
 
     import matplotlib
     fpath = Path(matplotlib.get_data_path()) / "fonts" / "ttf"
-    font_b = ImageFont.truetype(str(fpath / "DejaVuSans-Bold.ttf"), 22)
-    font_m = ImageFont.truetype(str(fpath / "DejaVuSans.ttf"), 19)
-    font_t = ImageFont.truetype(str(fpath / "DejaVuSans-Bold.ttf"), 27)
-    font_s = ImageFont.truetype(str(fpath / "DejaVuSans.ttf"), 17)
+    font_b = ImageFont.truetype(str(fpath / "DejaVuSans-Bold.ttf"), 28)
+    font_m = ImageFont.truetype(str(fpath / "DejaVuSans.ttf"), 25)
+    font_t = ImageFont.truetype(str(fpath / "DejaVuSans-Bold.ttf"), 34)
+    font_s = ImageFont.truetype(str(fpath / "DejaVuSans.ttf"), 21)
 
     # Size each label plate to its own widest line: "fixed schedule - DashGaussian" overruns a
     # fixed-width plate and the tail of the text lands unreadably on whatever the render shows.
@@ -449,18 +457,18 @@ def cmd_compose(args) -> int:
         # Darken the label plates on the array: an RGB PIL image takes no alpha in `fill`.
         for method, x0 in (("agent", margin), ("baseline", margin + panel_w + gutter)):
             held = st.get(f"{method}_held", False) and st["tag"] != "final"
-            y0, y1 = header + 12, header + 12 + (104 if held else 84)
+            y0, y1 = header + 12, header + 12 + (142 if held else 112)
             pw = min(plate_w[method], panel_w - 24)
             patch = canvas[y0:y1, x0 + 12:x0 + 12 + pw]
             canvas[y0:y1, x0 + 12:x0 + 12 + pw] = (patch * 0.32).astype(np.uint8)
 
         pil = Image.fromarray(canvas[:, :, ::-1])
         d = ImageDraw.Draw(pil)
-        d.text((margin, 18), title, font=font_t, fill=(20, 20, 20))
+        d.text((margin, 24), title, font=font_t, fill=(20, 20, 20))
         same = st["tag"] != "final"
         note = (f"same wall-clock for both:  {st['trigger_s']:.0f} s"
                 if same else "end of each run")
-        d.text((W - margin - d.textlength(note, font=font_s), 26), note, font=font_s, fill=(90, 90, 90))
+        d.text((W - margin - d.textlength(note, font=font_s), 34), note, font=font_s, fill=(90, 90, 90))
 
         for method, x0, name, col in (("agent", margin, "PACE", BACKEND_COLOUR[backend]),
                                       ("baseline", margin + panel_w + gutter, "fixed schedule",
@@ -468,14 +476,14 @@ def cmd_compose(args) -> int:
             r = st[method]
             held = st.get(f"{method}_held", False) and st["tag"] != "final"
             d.text((x0 + 22, header + 20), f"{name} - {BACKEND_LABEL[backend]}", font=font_b,
-                   fill=tuple(int(col.lstrip('#')[i:i + 2], 16) for i in (0, 2, 4)))
-            d.text((x0 + 22, header + 48), f"{r['t']:.0f} s  -  iter {r['iter']:,}",
+                   fill=hex_rgb_light(col) if method == "agent" else (236, 236, 236))
+            d.text((x0 + 22, header + 52), f"{r['t']:.0f} s  -  iter {r['iter']:,}",
                    font=font_m, fill=(235, 235, 235))
-            d.text((x0 + 22, header + 72),
+            d.text((x0 + 22, header + 84),
                    f"{r['N'] / 1e6:.2f}M Gaussians  -  {r['psnr']:.2f} dB",
                    font=font_m, fill=(235, 235, 235))
             if held:
-                d.text((x0 + 22, header + 96), "run already ended", font=font_s, fill=(255, 190, 120))
+                d.text((x0 + 22, header + 116), "run already ended", font=font_s, fill=(255, 190, 120))
         frame = np.asarray(pil)[:, :, ::-1].copy()
         writer.write(frame)
         if args.poster and f == args.poster_frame:
